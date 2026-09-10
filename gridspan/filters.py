@@ -37,6 +37,7 @@ def dedup(
     cfgs: list[RunCfg],
     provider: StatusProvider | None = None,
     skip: tuple[str, ...] = ("FINISHED",),
+    policy: str = "skip",
 ) -> list[RunCfg]:
     """Drop repeats by identity, keeping the first of each.
 
@@ -49,7 +50,12 @@ def dedup(
     skip: which recorded statuses count as "done, do not re-run". The default
         skips only FINISHED runs, so FAILED, QUEUED, and RUNNING (interrupted)
         runs are re-run. Pass more statuses to skip them too.
+    policy: what to do when a cfg is a repeat. "skip" (default) drops it.
+        "error" raises ValueError on the first repeat, for a run that must be
+        entirely fresh.
     """
+    if policy not in ("skip", "error"):
+        raise ValueError(f"unknown policy {policy!r} (use 'skip' or 'error')")
     seen: set[str] = set()
     if provider is not None:
         seen.update(
@@ -59,6 +65,8 @@ def dedup(
     for cfg in cfgs:
         key = identity(cfg)
         if key in seen:
+            if policy == "error":
+                raise ValueError(f"duplicate run, identity already seen: {key}")
             continue
         seen.add(key)
         out.append(cfg)
