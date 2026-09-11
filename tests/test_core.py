@@ -94,3 +94,29 @@ def test_expand_stamp_flag_fills_hash_per_point():
     for point in out:
         assert point["gridspan.id.hash"] == identity(point)
     assert out[0]["gridspan.id.hash"] != out[1]["gridspan.id.hash"]
+
+
+def test_expand_passes_reserved_keys_through_whole():
+    # A reserved key's list value must not be swept as an axis.
+    out = expand({"a": [1, 2], "gridspan.id.exclude": ["a"]})
+    assert len(out) == 2
+    for point in out:
+        assert point["gridspan.id.exclude"] == ["a"]
+
+
+def test_expand_then_exclude_drops_a_key_from_identity():
+    # The real user path: put exclude in the spec, expand, then dedup.
+    spec = {"model": ["x", "y"], "retries": [3, 5], "gridspan.id.exclude": ["retries"]}
+    out = expand(spec)
+    assert len(out) == 4  # 2 models x 2 retries
+    # retries is excluded from identity, so each model's two retry variants
+    # collapse to one: 2 distinct identities, not 4.
+    assert len({identity(p) for p in out}) == 2
+
+
+def test_expand_then_include_narrows_identity():
+    spec = {"model": ["x", "y"], "seed": [0, 1], "gridspan.id.include": ["model"]}
+    out = expand(spec)
+    assert len(out) == 4
+    # only model counts for identity, so seed does not split it.
+    assert len({identity(p) for p in out}) == 2

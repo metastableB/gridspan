@@ -51,7 +51,11 @@ def expand(spec: GridSpec, stamp: bool = False) -> list[RunCfg]:
     axes: list[list[Any]] = []
     for key in keys:
         value = flat[key]
-        if isinstance(value, list):
+        if key.startswith("gridspan.id."):
+            # Reserved keys configure identity; they are never swept as axes,
+            # so their list values (e.g. an exclude list) pass through whole.
+            axes.append([value])
+        elif isinstance(value, list):
             if not value:
                 raise ValueError(f"empty axis at {key!r}")
             axes.append(value)

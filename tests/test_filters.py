@@ -38,6 +38,16 @@ def test_dedup_keeps_the_first_of_each_identity():
     assert dedup([a, b, c]) == [a, c]
 
 
+def test_dedup_collapses_a_grid_with_an_excluded_key():
+    from gridspan.core import expand
+
+    # An excluded key varies but must not create distinct runs.
+    spec = {"model": ["x", "y"], "retries": [3, 5], "gridspan.id.exclude": ["retries"]}
+    out = dedup(expand(spec))
+    assert len(out) == 2  # one per model; retries does not split identity
+    assert [c["model"] for c in out] == ["x", "y"]
+
+
 def test_dedup_drops_configs_the_provider_already_finished():
     a = {"model.name": "x", "runtime.bs": 16}
     b = {"model.name": "y", "runtime.bs": 16}
