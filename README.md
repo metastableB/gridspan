@@ -101,8 +101,8 @@ spec = {
     "gridspan.id.exclude": ["retries"],
 }
 gridspan.dedup(gridspan.expand(spec))
-# retries is out of the identity, so the two retry variants per model
-# collapse: 2 configs, not 4.
+# 2 configs, one per model. retries is out of the identity, so its
+# value does not affect the hash.
 ```
 Since retries was excluded from the spec, we can increase retries and the runs
 still produce the same hash. This can be useful, if part of the previous grid
@@ -123,7 +123,8 @@ cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
 **5. Sample the grid, then prune with your own filter.**
 
 <!-- TODO: the apply(...) chain reads awkwardly. Revisit the filter syntax and
-     language — a fluent, Ray-like .map(...).filter(...) chain would read better. -->
+     language — a fluent, Ray-like .map(...).filter(...) chain would read better.
+     Or just drop apply all-together -->
 
 ```python
 def small_only(cfgs):
