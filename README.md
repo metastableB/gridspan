@@ -1,7 +1,8 @@
 # gridspan
 
-A simple python library that takes a grid of parameters specified in a YAML
-and generates the grid points as a list of dicts.
+A simple python library that takes a grid of parameters specified in a YAML and
+generates individual grid points as a list of dicts. Useful when you want to
+quickly setup massive experimental sweeps.
 
 ## Install
 
@@ -13,33 +14,35 @@ pip install -e .            # core only
 
 ## Quick start
 
-At the core, gridspan takes a nested dict, 
+Gridspan is designed to work with configurations/parameters specified as nested
+dict-likes. Conceptually, Gridspan take such a dict,
 1. flattens it, 
-2. treats the values as sets (for each key), and
+2. treats the values corresponding to each flattened key as sets, and
 3. computes a set product to give a list of dicts. 
 
-Write the grid as a YAML file:
 
+Consider this example grid configuration for some hypothetical script,
 ```yaml
-# sweep.yaml
+# sweep_oom.yaml
 model:
   name:
     - gpt-4
-    - gpt-5          # a set of 2
+    - gpt-5               # a set of 2
 runtime:
-  max_tokens: 8192   # a singleton
+  max_tokens: 8192        # a singleton
+  num_gpus: [1, 2, 4, 8]
 ```
 
-then expand it:
-
+To convert this to a grid using gridspan, we do
 ```python
 import gridspan
 
-for cfg in gridspan.from_yaml("sweep.yaml"):
+for cfg in gridspan.from_yaml("sweep_oom.yaml"):
     # cfg is one flat dict:
     #   {
     #       "model.name": "gpt-4",
     #       "runtime.max_tokens": 8192,
+    #       "runtime.num_gpus": 1,
     #   }
     run_one(cfg["model.name"], cfg["runtime.max_tokens"])
 ```
@@ -47,11 +50,11 @@ for cfg in gridspan.from_yaml("sweep.yaml"):
 You can apply filters to eliminate invalid points in the grid using the `apply`
 function (or just processing the gird yourself).
 
-By default `gridspan` does not deduplicate. However, `dedup()` can be used to
-deduplicate configurations.
+By default `gridspan` does not remove duplicates, but this can be enabled with
+the `dedup` function.
 
 ```python
-cfgs = gridspan.from_yaml("sweep.yaml")
+cfgs = gridspan.from_yaml("sweep_oom.yaml")
 cfgs = gridspan.dedup(cfgs)
 cfgs = gridspan.subsample(cfgs, n=20, seed=0)
 ```
@@ -70,7 +73,7 @@ finished. We ship one for MLflow:
 from gridspan.providers import MlflowProvider
 
 provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
-cfgs = gridspan.dedup(gridspan.from_yaml("sweep.yaml"), provider=provider)
+cfgs = gridspan.dedup(gridspan.from_yaml("sweep_oom.yaml"), provider=provider)
 ```
 
 ## Examples 
@@ -80,9 +83,7 @@ cfgs = gridspan.dedup(gridspan.from_yaml("sweep.yaml"), provider=provider)
 ```yaml
 # spec.yaml
 model:
-  name:
-    - gpt-4
-    - gpt-5
+  name: ["gpt-4", "gpt-5"]
 seed: 0
 ```
 
@@ -121,7 +122,7 @@ model:
   - x
   - y
 retries: 3
-gridspan.id.exclude:
+gridspan.id.exclude:          # TODO: Simplify this
   - retries
 ```
 
