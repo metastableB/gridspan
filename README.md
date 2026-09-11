@@ -73,8 +73,67 @@ cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
 
 ## Examples 
 
-1. Simple nested dict <- show dot dict, sigleton vs List/set
-2. Simple nested dict with list as value
-3. Simple nested dict with some paraters that don't matter for run-uniqueness
-4. Simple nested dict with mlflow provider
-5. 
+**1. A nested dict — singleton vs set, and dotted keys.**
+
+```python
+spec = {"model": {"name": ["gpt-4", "gpt-5"]}, "seed": 0}
+gridspan.expand(spec)
+# [{"model.name": "gpt-4", "seed": 0},
+#  {"model.name": "gpt-5", "seed": 0}]
+```
+
+**2. A value that is itself a list — wrap it so it stays whole.**
+
+```python
+spec = {"tools": [["search", "python"], ["search"]]}
+gridspan.expand(spec)
+# [{"tools": ["search", "python"]},
+#  {"tools": ["search"]}]
+```
+
+**3. Parameters that don't matter for run-uniqueness — exclude them.**
+
+Say we ran the following spec. 
+```python
+spec = {
+    "model": ["x", "y"],
+    "retries": 3,                  
+    "gridspan.id.exclude": ["retries"],
+}
+gridspan.dedup(gridspan.expand(spec))
+# retries is out of the identity, so the two retry variants per model
+# collapse: 2 configs, not 4.
+```
+Since retries was excluded from the spec, we can increase retries and the runs
+still produce the same hash. This can be useful, if part of the previous grid
+failed and a certain retry value and you want to expand.
+
+**4. Skip runs an MLflow experiment already finished.**
+
+```python
+from gridspan.providers import MlflowProvider
+
+spec = {"model": ["x", "y", "z"]}
+provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
+cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
+# any model already FINISHED in the experiment is dropped; failed or
+# unfinished ones come back.
+```
+
+**5. Sample the grid, then prune with your own filter.**
+
+<!-- TODO: the apply(...) chain reads awkwardly. Revisit the filter syntax and
+     language — a fluent, Ray-like .map(...).filter(...) chain would read better. -->
+
+```python
+def small_only(cfgs):
+    return [c for c in cfgs if c["batch"] <= 32]
+
+spec = {"model": ["x", "y"], "batch": [16, 32, 64]}
+cfgs = gridspan.apply(
+    gridspan.expand(spec),
+    small_only,                                       # your own filter
+    lambda cs: gridspan.subsample(cs, n=2, seed=0),   # then a random 2
+)
+```
+
