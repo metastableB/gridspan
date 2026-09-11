@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gridspan.core import expand, identity
+from gridspan.core import expand, from_yaml, identity
 
 
 def test_scalar_only_gives_one_point():
@@ -120,3 +120,23 @@ def test_expand_then_include_narrows_identity():
     assert len(out) == 4
     # only model counts for identity, so seed does not split it.
     assert len({identity(p) for p in out}) == 2
+
+
+def test_from_yaml_reads_and_expands(tmp_path):
+    spec_file = tmp_path / "spec.yaml"
+    spec_file.write_text(
+        "model:\n  name:\n    - a\n    - b\nruntime:\n  bs: 16\n"
+    )
+    out = from_yaml(spec_file)
+    assert out == [
+        {"model.name": "a", "runtime.bs": 16},
+        {"model.name": "b", "runtime.bs": 16},
+    ]
+
+
+def test_from_yaml_stamp_passthrough(tmp_path):
+    spec_file = tmp_path / "spec.yaml"
+    spec_file.write_text("a:\n  - 1\n  - 2\n")
+    out = from_yaml(spec_file, stamp=True)
+    for point in out:
+        assert point["gridspan.id.hash"] == identity(point)

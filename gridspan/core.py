@@ -96,9 +96,13 @@ def identity(cfg: RunCfg) -> str:
     return hashlib.md5(payload.encode()).hexdigest()
 
 
-def from_yaml(path: str | Path) -> list[RunCfg]:
-    """Read a YAML GridSpec and expand it in one call."""
+def from_yaml(path: str | Path, stamp: bool = False) -> list[RunCfg]:
+    """Read a YAML GridSpec and expand it in one call.
+
+    stamp is passed through to expand: when True, each output RunCfg carries
+    its own gridspan.id.hash.
+    """
     import yaml
 
     with open(path, encoding="utf-8") as handle:
-        return expand(yaml.safe_load(handle) or {})
+        return expand(yaml.safe_load(handle) or {}, stamp=stamp)

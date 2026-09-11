@@ -18,30 +18,30 @@ At the core, gridspan takes a nested dict,
 2. treats the values as sets (for each key), and
 3. computes a set product to give a list of dicts. 
 
+Write the grid as a YAML file:
+
+```yaml
+# sweep.yaml
+model:
+  name:
+    - gpt-4
+    - gpt-5          # a set of 2
+runtime:
+  max_tokens: 8192   # a singleton
+```
+
+then expand it:
 
 ```python
 import gridspan
 
-spec = {
-    "model": {"name": ["gpt-4", "gpt-5"]},   # a set of 2
-    "runtime": {"max_tokens": 8192},          # a singleton
-}
-
-for cfg in gridspan.expand(spec):
-    # cfg is one flat dict: {"model.name": ..., "runtime.max_tokens": 8192}
+for cfg in gridspan.from_yaml("sweep.yaml"):
+    # cfg is one flat dict:
+    #   {
+    #       "model.name": "gpt-4",
+    #       "runtime.max_tokens": 8192,
+    #   }
     run_one(cfg["model.name"], cfg["runtime.max_tokens"])
-```
-
-Read the same spec from a YAML file instead:
-```yaml
-model:
-    name: ["gpt-4", "gpt-5"]
-runtime:
-    max_tokens: 8192
-```
-then, 
-```python
-cfgs = gridspan.from_yaml("sweep.yaml")
 ```
 
 You can apply filters to eliminate invalid points in the grid using the `apply`
@@ -49,11 +49,13 @@ function (or just processing the gird yourself).
 
 By default `gridspan` does not deduplicate. However, `dedup()` can be used to
 deduplicate configurations.
+
 ```python
-cfgs = gridspan.expand(spec)
+cfgs = gridspan.from_yaml("sweep.yaml")
 cfgs = gridspan.dedup(cfgs)
 cfgs = gridspan.subsample(cfgs, n=20, seed=0)
 ```
+
 Two configurations are considered identical if the hashes of their
 configurations are identical. To include or exclude a key from this hashing, use
 the `gridspan.id.include` and `gridspan.id.exclude` grids to specify a list of
@@ -68,54 +70,86 @@ finished. We ship one for MLflow:
 from gridspan.providers import MlflowProvider
 
 provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
-cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
+cfgs = gridspan.dedup(gridspan.from_yaml("sweep.yaml"), provider=provider)
 ```
 
 ## Examples 
 
 **1. A nested dict — singleton vs set, and dotted keys.**
 
+```yaml
+# spec.yaml
+model:
+  name:
+    - gpt-4
+    - gpt-5
+seed: 0
+```
+
 ```python
-spec = {"model": {"name": ["gpt-4", "gpt-5"]}, "seed": 0}
-gridspan.expand(spec)
-# [{"model.name": "gpt-4", "seed": 0},
-#  {"model.name": "gpt-5", "seed": 0}]
+gridspan.from_yaml("spec.yaml")
+# [
+#     {"model.name": "gpt-4", "seed": 0},
+#     {"model.name": "gpt-5", "seed": 0},
+# ]
 ```
 
 **2. A value that is itself a list — wrap it so it stays whole.**
 
+```yaml
+# spec.yaml
+tools:
+  - [search, python]
+  - [search]
+```
+
 ```python
-spec = {"tools": [["search", "python"], ["search"]]}
-gridspan.expand(spec)
-# [{"tools": ["search", "python"]},
-#  {"tools": ["search"]}]
+gridspan.from_yaml("spec.yaml")
+# [
+#     {"tools": ["search", "python"]},
+#     {"tools": ["search"]},
+# ]
 ```
 
 **3. Parameters that don't matter for run-uniqueness — exclude them.**
 
-Say we ran the following spec. 
+Say we ran the following spec.
+
+```yaml
+# spec.yaml
+model:
+  - x
+  - y
+retries: 3
+gridspan.id.exclude:
+  - retries
+```
+
 ```python
-spec = {
-    "model": ["x", "y"],
-    "retries": 3,                  
-    "gridspan.id.exclude": ["retries"],
-}
-gridspan.dedup(gridspan.expand(spec))
+gridspan.dedup(gridspan.from_yaml("spec.yaml"))
 # 2 configs, one per model. retries is out of the identity, so its
 # value does not affect the hash.
 ```
+
 Since retries was excluded from the spec, we can increase retries and the runs
 still produce the same hash. This can be useful, if part of the previous grid
 failed and a certain retry value and you want to expand.
 
 **4. Skip runs an MLflow experiment already finished.**
 
+```yaml
+# spec.yaml
+model:
+  - x
+  - y
+  - z
+```
+
 ```python
 from gridspan.providers import MlflowProvider
 
-spec = {"model": ["x", "y", "z"]}
 provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
-cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
+cfgs = gridspan.dedup(gridspan.from_yaml("spec.yaml"), provider=provider)
 # any model already FINISHED in the experiment is dropped; failed or
 # unfinished ones come back.
 ```
@@ -126,13 +160,23 @@ cfgs = gridspan.dedup(gridspan.expand(spec, stamp=True), provider=provider)
      language — a fluent, Ray-like .map(...).filter(...) chain would read better.
      Or just drop apply all-together -->
 
+```yaml
+# spec.yaml
+model:
+  - x
+  - y
+batch:
+  - 16
+  - 32
+  - 64
+```
+
 ```python
 def small_only(cfgs):
     return [c for c in cfgs if c["batch"] <= 32]
 
-spec = {"model": ["x", "y"], "batch": [16, 32, 64]}
 cfgs = gridspan.apply(
-    gridspan.expand(spec),
+    gridspan.from_yaml("spec.yaml"),
     small_only,                                       # your own filter
     lambda cs: gridspan.subsample(cs, n=2, seed=0),   # then a random 2
 )
