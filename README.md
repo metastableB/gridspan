@@ -12,6 +12,57 @@ cd gridspan
 pip install -e .            # core only
 ```
 
+## Entry points — how you run each grid point
+
+`gridspan.from_yaml` (or `gridspan.expand`) turns a spec into a list of run
+configs — one flat dict per grid point. How you run each one depends on your
+script. Two common shapes:
+
+**1. You have a Python function.** Loop over the configs and call it.
+
+```python
+import gridspan
+
+def run(cfg):
+    ...  # cfg["model.name"], cfg["runtime.num_gpus"], ...
+
+for cfg in gridspan.from_yaml("sweep.yaml"):
+    run(cfg)
+```
+
+**2. You have a command-line script** (its own argparse) you'd rather not
+import. Turn each config into argv with `to_argv` and shell out.
+
+```python
+import subprocess
+import gridspan
+
+for cfg in gridspan.from_yaml("sweep.yaml"):
+    argv = gridspan.to_argv(cfg)   # {"model.name": "gpt-4"} -> ["--model-name", "gpt-4"]
+    subprocess.run(["python", "train.py", *argv])
+```
+
+`to_argv` dashes the dotted keys (`model.name` -> `--model-name`), renders a
+bool `True` as a bare flag and `False` as nothing, and skips the reserved
+`gridspan.id.*` keys. Change the separator with `sep` (`sep="_"` for
+`--model_name`, `sep="."` to keep it dotted).
+
+Every target CLI names its flags differently, so `to_argv` takes two escape
+hatches — `key` (rename a flag) and `value` (reformat a value):
+
+```python
+def key(k):
+    # the target script calls it --gpus, and wants underscores gone elsewhere
+    return {"runtime.num_gpus": "--gpus"}.get(k, "--" + k.replace(".", "-").replace("_", "-"))
+
+argv = gridspan.to_argv(
+    {"model.name": "gpt-4", "runtime.num_gpus": 2, "tools": ["a", "b"]},
+    key=key,
+    value=lambda v: [",".join(v)] if isinstance(v, list) else [str(v)],
+)
+# ["--model-name", "gpt-4", "--gpus", "2", "--tools", "a,b"]
+```
+
 ## Quick start
 
 Gridspan is designed to work with configurations/parameters specified as nested

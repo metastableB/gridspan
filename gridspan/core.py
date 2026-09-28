@@ -106,3 +106,43 @@ def from_yaml(path: str | Path, stamp: bool = False) -> list[RunCfg]:
 
     with open(path, encoding="utf-8") as handle:
         return expand(yaml.safe_load(handle) or {}, stamp=stamp)
+
+
+def to_argv(cfg: RunCfg, sep: str = "-", key=None, value=None) -> list[str]:
+    """Render a RunCfg as command-line tokens for an existing CLI script.
+
+    For each key/value in cfg (reserved gridspan.id.* keys are skipped):
+      - the flag comes from key(dotted_key). The default turns a dotted key
+        into a dashed flag: "model.name" -> "--model-name", with sep choosing
+        the separator ("-", "_", or "." to keep it dotted).
+      - the value tokens come from value(v). The default renders each value as
+        its str(). A bool is special-cased and handled here, not by value: True
+        emits the bare flag (argparse store_true style) and False emits nothing.
+
+    Override key or value to fit a target CLI whose flag names or value format
+    differ. key overrides never see reserved keys; value overrides never see
+    bools.
+
+    Args:
+        cfg: one RunCfg (a flat dotted-key dict).
+        sep: separator the default key mapper substitutes for ".".
+        key: optional dotted_key -> flag string.
+        value: optional value -> list of token strings (not called for bools).
+
+    Returns:
+        A list of argv tokens, e.g. ["--model-name", "gpt-4", "--verbose"].
+    """
+    key = key or (lambda k: "--" + k.replace(".", sep))
+    value = value or (lambda v: [str(v)])
+    argv: list[str] = []
+    for name, val in cfg.items():
+        if name.startswith("gridspan.id."):
+            continue
+        flag = key(name)
+        if isinstance(val, bool):
+            if val:
+                argv.append(flag)  # store_true: bare flag when True, nothing when False
+            continue
+        argv.append(flag)
+        argv.extend(value(val))
+    return argv

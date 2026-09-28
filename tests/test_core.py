@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gridspan.core import expand, from_yaml, identity
+from gridspan.core import expand, from_yaml, identity, to_argv
 
 
 def test_scalar_only_gives_one_point():
@@ -140,3 +140,42 @@ def test_from_yaml_stamp_passthrough(tmp_path):
     out = from_yaml(spec_file, stamp=True)
     for point in out:
         assert point["gridspan.id.hash"] == identity(point)
+
+
+def test_to_argv_dashes_dotted_keys_by_default():
+    argv = to_argv({"model.name": "gpt-4", "trainer.lr": 0.1})
+    assert argv == ["--model-name", "gpt-4", "--trainer-lr", "0.1"]
+
+
+def test_to_argv_translates_only_the_dotted_separator():
+    # The "." is the flatten separator; an underscore in a key name is kept.
+    assert to_argv({"runtime.num_gpus": 2}) == ["--runtime-num_gpus", "2"]
+
+
+def test_to_argv_sep_controls_the_separator():
+    cfg = {"model.name": "gpt-4"}
+    assert to_argv(cfg, sep="_") == ["--model_name", "gpt-4"]
+    assert to_argv(cfg, sep=".") == ["--model.name", "gpt-4"]
+
+
+def test_to_argv_bool_true_is_a_bare_flag_false_is_skipped():
+    argv = to_argv({"verbose": True, "dry_run": False, "n": 3})
+    assert argv == ["--verbose", "--n", "3"]
+
+
+def test_to_argv_skips_reserved_keys():
+    argv = to_argv({"model": "x", "gridspan.id.hash": "deadbeef"})
+    assert argv == ["--model", "x"]
+
+
+def test_to_argv_key_override_remaps_one_flag():
+    def key(k):
+        return {"runtime.num_gpus": "--gpus"}.get(k, "--" + k.replace(".", "-"))
+
+    argv = to_argv({"model.name": "gpt-4", "runtime.num_gpus": 2}, key=key)
+    assert argv == ["--model-name", "gpt-4", "--gpus", "2"]
+
+
+def test_to_argv_value_override_joins_a_list():
+    argv = to_argv({"tools": ["a", "b"]}, value=lambda v: [",".join(v)])
+    assert argv == ["--tools", "a,b"]

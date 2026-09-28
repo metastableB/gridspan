@@ -72,6 +72,11 @@ Core:
     from_yaml(path: str | Path) -> list[RunCfg]
         Read a YAML GridSpec and expand it in one call.
 
+    to_argv(cfg, sep="-", key=None, value=None) -> list[str]
+        Render a RunCfg as command-line tokens for an existing CLI script.
+        Dashes the dotted keys, renders a bool True as a bare flag, skips the
+        reserved keys. Override key or value for a target CLI's conventions.
+
 Filters (list -> list helpers over batches of RunCfgs):
 
     dedup(cfgs: list[RunCfg], provider=None) -> list[RunCfg]
@@ -108,7 +113,7 @@ Reserved keys the core algorithm honors:
                            existing runs.
 """
 
-from gridspan.core import GridSpec, RunCfg, expand, from_yaml
+from gridspan.core import GridSpec, RunCfg, expand, from_yaml, to_argv
 from gridspan.filters import StatusProvider, apply, dedup, subsample
 
 __all__ = [
@@ -120,4 +125,5 @@ __all__ = [
     "expand",
     "from_yaml",
     "subsample",
+    "to_argv",
 ]
