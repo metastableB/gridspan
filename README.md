@@ -7,9 +7,8 @@ after performing optional filtering and deduplication.
 ## Install
 
 ```bash
-git clone https://github.com/metastableB/gridspan.git
-cd gridspan
-pip install -e .
+pip install gridspan            # core
+pip install "gridspan[mlflow]"  # with the optional MLflow store
 ```
 
 ## Quick Start 
@@ -310,4 +309,5 @@ matching quoted string count as the same identity. Any other type raises
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache-2.0. See [LICENSE](https://github.com/metastableB/gridspan/blob/main/LICENSE)
+and [NOTICE](https://github.com/metastableB/gridspan/blob/main/NOTICE).
