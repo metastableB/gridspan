@@ -15,6 +15,8 @@ Main API:
 from gridspan.core import GridSpan, GridSpec, RunCfg, from_dict, from_yaml
 from gridspan.stores import Store, TextStore
 
+__version__ = "0.1.0"
+
 __all__ = [
     "GridSpan",
     "GridSpec",
