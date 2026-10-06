@@ -1,236 +1,313 @@
 # gridspan
 
-A simple python library that takes a grid of parameters specified in a YAML and
-generates individual grid points as a list of dicts. Useful when you want to
-quickly setup massive experimental sweeps.
+`gridspan` is a small Python library for parameter sweeps.  It takes a nested
+parameter grid and returns concrete grid points as a list of flat dictionaries,
+after performing optional filtering and deduplication.
 
 ## Install
 
 ```bash
-git clone git@github.com:metastableB/gridspan.git
+git clone https://github.com/metastableB/gridspan.git
 cd gridspan
-pip install -e .            # core only
+pip install -e .
 ```
 
-## Entry points — how you run each grid point
+## Quick Start 
 
-`gridspan.from_yaml` (or `gridspan.expand`) turns a spec into a list of run
-configs — one flat dict per grid point. How you run each one depends on your
-script. Two common shapes:
+For illustration purposes, we will use `gridspan` to sweep over the `curl`
+command line tool. First define a sweep file:
 
-**1. You have a Python function.** Loop over the configs and call it.
-
-```python
-import gridspan
-
-def run(cfg):
-    ...  # cfg["model.name"], cfg["runtime.num_gpus"], ...
-
-for cfg in gridspan.from_yaml("sweep.yaml"):
-    run(cfg)
-```
-
-**2. You have a command-line script** (its own argparse) you'd rather not
-import. Turn each config into argv with `to_argv` and shell out.
-
-```python
-import subprocess
-import gridspan
-
-for cfg in gridspan.from_yaml("sweep.yaml"):
-    argv = gridspan.to_argv(cfg)   # {"model.name": "gpt-4"} -> ["--model-name", "gpt-4"]
-    subprocess.run(["python", "train.py", *argv])
-```
-
-`to_argv` dashes the dotted keys (`model.name` -> `--model-name`), renders a
-bool `True` as a bare flag and `False` as nothing, and skips the reserved
-`gridspan.id.*` keys. Change the separator with `sep` (`sep="_"` for
-`--model_name`, `sep="."` to keep it dotted).
-
-Every target CLI names its flags differently, so `to_argv` takes two escape
-hatches — `key` (rename a flag) and `value` (reformat a value):
-
-```python
-def key(k):
-    # the target script calls it --gpus, and wants underscores gone elsewhere
-    return {"runtime.num_gpus": "--gpus"}.get(k, "--" + k.replace(".", "-").replace("_", "-"))
-
-argv = gridspan.to_argv(
-    {"model.name": "gpt-4", "runtime.num_gpus": 2, "tools": ["a", "b"]},
-    key=key,
-    value=lambda v: [",".join(v)] if isinstance(v, list) else [str(v)],
-)
-# ["--model-name", "gpt-4", "--gpus", "2", "--tools", "a,b"]
-```
-
-## Quick start
-
-Gridspan is designed to work with configurations/parameters specified as nested
-dict-likes. Conceptually, Gridspan take such a dict,
-1. flattens it, 
-2. treats the values corresponding to each flattened key as sets, and
-3. computes a set product to give a list of dicts. 
-
-
-Consider this example grid configuration for some hypothetical script,
 ```yaml
-# sweep_oom.yaml
+# curl_sweep.yaml
+max-time: [2, 5]
+retry: [0, 3]
+url: ["https://example.com"]
+```
+
+Then expand the grid and render each config to CLI args:
+
+```python
+import gridspan as gs
+
+configs = gs.from_yaml("curl_sweep.yaml").expand()
+
+for argv in configs.to_argv():
+  print(["curl", *argv])
+```
+
+```text
+# Output
+['curl', '--max-time', '2', '--retry', '0', '--url', 'https://example.com']
+['curl', '--max-time', '2', '--retry', '3', '--url', 'https://example.com']
+['curl', '--max-time', '5', '--retry', '0', '--url', 'https://example.com']
+['curl', '--max-time', '5', '--retry', '3', '--url', 'https://example.com']
+```
+
+## Deeper Usage
+
+The behavior of `gridspan` is defined by these rules.
+
+1. `GridSpec`: A spec is a nested dictionary, with the flattened key specifying
+the argument key and the value specifying the set of values to sweep over. 
+
+2. `GridSpan`: A spec expansion is a simple cartesian product of all sweep axes,
+that gives the span.  Each output point is a flat dictionary with path keys.
+
+
+**Example:** The following `spec.yaml`,
+
+```yaml
+# spec.yaml
 model:
-  name:
-    - gpt-4
-    - gpt-5               # a set of 2
+  name: [gpt-4, gpt-5]
 runtime:
-  max_tokens: 8192        # a singleton
-  num_gpus: [1, 2, 4, 8]
+  max_tokens: [8192, 32364]
+  batch: [1, 32]
 ```
-
-To convert this to a grid using gridspan, we do
+Becomes,
 ```python
-import gridspan
-
-for cfg in gridspan.from_yaml("sweep_oom.yaml"):
-    # cfg is one flat dict:
-    #   {
-    #       "model.name": "gpt-4",
-    #       "runtime.max_tokens": 8192,
-    #       "runtime.num_gpus": 1,
-    #   }
-    run_one(cfg["model.name"], cfg["runtime.max_tokens"])
-```
-
-You can apply filters to eliminate invalid points in the grid using the `apply`
-function (or just processing the gird yourself).
-
-By default `gridspan` does not remove duplicates, but this can be enabled with
-the `dedup` function.
-
-```python
-cfgs = gridspan.from_yaml("sweep_oom.yaml")
-cfgs = gridspan.dedup(cfgs)
-cfgs = gridspan.subsample(cfgs, n=20, seed=0)
-```
-
-Two configurations are considered identical if the hashes of their
-configurations are identical. To include or exclude a key from this hashing, use
-the `gridspan.id.include` and `gridspan.id.exclude` grids to specify a list of
-included and excluded keys. Note, the values are not treated as sets.
-
-Deduplication can also be extended to retry failed jobs, or skip finished jobs.
-When a grid is large, failures are inevitable. For such cases, `dedup` reads a
-store of past runs through a `StatusProvider` and drops the ones it already
-finished. We ship one for MLflow:
-
-```python
-from gridspan.providers import MlflowProvider
-
-provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
-cfgs = gridspan.dedup(gridspan.from_yaml("sweep_oom.yaml"), provider=provider)
-```
-
-## Examples 
-
-**1. A nested dict — singleton vs set, and dotted keys.**
-
-```yaml
-# spec.yaml
-model:
-  name: ["gpt-4", "gpt-5"]
-seed: 0
-```
-
-```python
-gridspan.from_yaml("spec.yaml")
+gs.from_yaml("spec.yaml").expand()
 # [
-#     {"model.name": "gpt-4", "seed": 0},
-#     {"model.name": "gpt-5", "seed": 0},
+#   {"model.name": "gpt-4", "runtime.max_tokens": 8192, 'runtime.batch': 1},
+#   {"model.name": "gpt-4", "runtime.max_tokens": 8192, 'runtime.batch': 32},
+#   ...
 # ]
 ```
 
-**2. A value that is itself a list — wrap it so it stays whole.**
+A list is always a set of choices, and each grid point gets its own copy of
+its values. To use a list or a dictionary as one value, wrap it in a list:
 
 ```yaml
-# spec.yaml
-tools:
-  - [search, python]
-  - [search]
+layers: [[64, 64], [128]]               # two choices: [64, 64] and [128]
+optimizer: [{name: adam, lr: 0.001}]    # one choice: the whole dictionary
+```
+
+
+### Optional post-expansion transformations/filters 
+
+We provide some common post-expansion operations. Custom operations can be
+applied through `apply`.
+
+- `subsample(n, seed=0)` samples exactly `n` items without replacement.
+- `stamp` writes or refreshes each point's identity hash.
+- `dedup` refreshes hashes and removes duplicates, optionally checking a store for prior run status.
+- `apply` composes custom transforms left-to-right.
+- `to_argv` renders each point's non-metadata keys as `--key value` pairs.
+  Keys keep the spec's separator, for example `--model.name`.
+
+`subsample` wraps Python's `random.sample`. A count of zero returns an empty
+span; negative counts or counts larger than the span raise `ValueError`.
+For a fraction, compute the count explicitly, for example
+`span.subsample(n=round(len(span) * 0.25), seed=0)`.
+
+`GridSpan.apply` is chainable. Each call receives the current list of configs
+and returns the next list.
+
+```python
+span = gs.from_yaml("spec.yaml").expand()
+
+def keep_small_batch_for_large_max_tokens(cfgs):
+  exclude = lambda c: c["runtime.batch"] == 32 and c["runtime.max_tokens"] == 32364
+  return [c for c in cfgs if not exclude (c)]
+
+span = span.apply(keep_small_batch_for_large_max_tokens).dedup()
+```
+### Optional reserved keywords, metadata, resume, deduplication and identity semantics
+
+Oftentimes, due to run failures or spec modification, we often have to rerun the
+grid points in a certain span. To differentiate new grid points from previously
+existing grid points that might have already finished their runs,
+1. we compute an `id` for each grid point, and
+2. we optionally check a store for jobs that have already finished.
+
+`gridspan.*`: The top level `gridspan` key is reserved for metadata.
+
+- `gridspan.*`: Metadata is carried into each grid point, but is not swept or
+included in its identity hash.
+
+- `gridspan.id.hash`: `.dedup()` and `.stamp()` write the hash of the point's selected
+non-metadata key/value pairs. `gridspan.id.exclude` or `gridspan.id.include`
+can select which keys contribute to the hash.
+
+`.dedup()` automatically refreshes hashes before comparing points or checking
+a store. Use `.stamp()` when hashes need to be explicitly computed.
+
+Points remain editable and may be shared between spans. After further parameter
+changes, call `.dedup()` or `.stamp()` again before recording a job's status.
+
+Use only one of `include` or `exclude`, as a list of existing key names. Unknown
+names and conflicting include/exclude settings raise `ValueError` when the
+`GridSpec` is created. A selector that is not a list of strings raises `TypeError`.
+
+```yaml
+model: [x, y]
+retries: [3, 5]
+gridspan:
+  id:
+    exclude: [retries]
+```
+Consequence: changing `retries` does not change run identity in this spec.
+
+`GridSpec` requires nonempty string key names.  Key names  cannot contain that
+separator. 
+
+```python
+spec = gs.from_yaml("spec.yaml", key_sep="/")  # default key_sep = "."
+span = spec.expand()
+```
+
+Note: `key_sep` applies to metadata too. With `key_sep="/"`, nested `gridspan`,
+`id`, and `exclude` keys become `gridspan/id/exclude`. Metadata written with
+another separator, such as a root key `gridspan.note` or a key `id.exclude`
+under `gridspan`, raises `ValueError` when the `GridSpec` is created. The
+include/exclude lists refer to the resulting flattened parameter names.
+
+`GridSpan` keeps its separator through filters and uses it in `to_argv`.
+
+**Available store providers**
+
+- `TextStore`: skips hashes listed in a text file.
+- `MlflowStore`: An optional MLflow integration in `gridspan.extras`.
+  It is opinionated; its rules are listed below.
+
+An optional store helps keep track of prior runs for detecting which jobs can
+resume, which should be skipped, which have already finished and should be
+removed/deduplicated etc.  A store is any function or callable object that takes
+a list of grid-point hashes and returns the ones to skip. 
+
+```python
+def store(run_hashes):
+  return my_database.finished_among(run_hashes)
+```
+
+Stores can be used as part of `dedup` to filter the current span,
+```python
+pending = span.dedup(store=store)
+```
+
+`gridspan` calls the store once with the span's hashes, and drops the points
+whose hashes it returns. What counts as "done" is up to the store; gridspan has
+no notion of job status. Without a store, `.dedup()` only removes duplicates
+within the span.
+
+Stores only read. gridspan never writes to them; your job runner records
+finished jobs in whatever system it already uses. Each grid point carries its
+hash in `gridspan.id.hash`, which is the key to record it under.
+
+**Available Stores:** `TextStore`, `MlflowStore`
+
+- `TextStore`: `TextStore` reads a text file with one hash per line. Every
+listed hash is skipped:
+
+```text
+3f2a...
+9b1c...
 ```
 
 ```python
-gridspan.from_yaml("spec.yaml")
-# [
-#     {"tools": ["search", "python"]},
-#     {"tools": ["search"]},
-# ]
+store = gs.TextStore("done.txt")
+span = gs.from_yaml("curl_sweep.yaml").expand()
+pending = span.dedup(store=store)
 ```
 
-**3. Parameters that don't matter for run-uniqueness — exclude them.**
-
-Say we ran the following spec.
-
-```yaml
-# spec.yaml
-model:
-  - x
-  - y
-retries: 3
-gridspan.id.exclude:          # TODO: Simplify this
-  - retries
-```
+- `MlflowStore` skips points whose MLflow run reached one of the statuses you
+list, compared exactly:
 
 ```python
-gridspan.dedup(gridspan.from_yaml("spec.yaml"))
-# 2 configs, one per model. retries is out of the identity, so its
-# value does not affect the hash.
+from gridspan.extras import MlflowStore
+
+store = MlflowStore("my-experiment", tracking_uri="sqlite:///mlflow.db", skip={"FINISHED"})
+span = span.dedup(store=store)
 ```
 
-Since retries was excluded from the spec, we can increase retries and the runs
-still produce the same hash. This can be useful, if part of the previous grid
-failed and a certain retry value and you want to expand.
+`MlflowStore` is opinionated. Write your own store if these rules do not fit:
 
-**4. Skip runs an MLflow experiment already finished.**
+1. A run belongs to a grid point when its `gridspan.id.hash` tag (set by
+   `hash_tag`) equals the point's hash.
+2. It searches the named experiment and any `search_experiments`. Deleted
+   runs are ignored.
+3. If several runs share a hash, the newest run's status is used.
+4. A point is skipped when that status is in `skip`.
 
+
+
+## Limitations
+
+1. `key-value`: `to_argv` renders non-metadata settings as `--key value` pairs.
+It does not render bare switches like `--verbose` or positional arguments
+like `cp SRC DST`. These forms can be produced by post-processing each
+generated command.
+
+Example:
+Define the following spec,
 ```yaml
-# spec.yaml
-model:
-  - x
-  - y
-  - z
+# cp-example.yaml
+src: ["/my/path/A", "/my/path/B"]
+dst: ["/fast/dest/X", "/fastish/dest/Y"]
+verbose: [True, False]
 ```
+Then,
+```python
+import gridspan as gs
+
+span = gs.from_yaml("cp-example.yaml").expand()
+for argv in span.to_argv():
+  print(["cp", *argv])
+# ['cp', '--src', '/my/path/A', '--dst', '/fast/dest/X', '--verbose', 'True']
+# ['cp', '--src', '/my/path/A', '--dst', '/fast/dest/X', '--verbose', 'False']
+# ...
+```
+
+For this example, remove the `--src` and `--dst` labels while keeping their
+values in order. Keep `--verbose` only when its value is `True`:
 
 ```python
-from gridspan.providers import MlflowProvider
+def post_process(command):
+  command.remove("--src")
+  command.remove("--dst")
+  verbose_index = command.index("--verbose")
+  verbose_value = command.pop(verbose_index + 1)
+  if verbose_value == "False":
+    command.pop(verbose_index)
+  return command
 
-provider = MlflowProvider("my-experiment", tracking_uri="sqlite:///mlflow.db")
-cfgs = gridspan.dedup(gridspan.from_yaml("spec.yaml"), provider=provider)
-# any model already FINISHED in the experiment is dropped; failed or
-# unfinished ones come back.
+for argv in span.to_argv():
+  command = ["cp", *argv]
+  print(post_process(command))
 ```
 
-**5. Sample the grid, then prune with your own filter.**
-
-<!-- TODO: the apply(...) chain reads awkwardly. Revisit the filter syntax and
-     language — a fluent, Ray-like .map(...).filter(...) chain would read better.
-     Or just drop apply all-together -->
-
-```yaml
-# spec.yaml
-model:
-  - x
-  - y
-batch:
-  - 16
-  - 32
-  - 64
+```text
+['cp', '/my/path/A', '/fast/dest/X', '--verbose']
+['cp', '/my/path/A', '/fast/dest/X']
+...
 ```
 
-```python
-def small_only(cfgs):
-    return [c for c in cfgs if c["batch"] <= 32]
+2. `empty parameters`: Empty dictionary groups (`section: {}`) and empty
+choice lists (`section: []`) are skipped during expansion with a `UserWarning`
+naming the path.
+The remaining parameters expand normally. If all parameters are skipped,
+the result is `[{}]`, as for an empty spec.
 
-cfgs = gridspan.apply(
-    gridspan.from_yaml("spec.yaml"),
-    small_only,                                       # your own filter
-    lambda cs: gridspan.subsample(cs, n=2, seed=0),   # then a random 2
-)
-```
+To use an empty container as a value, wrap it as one choice: `[{}]` or `[[]]`.
+Values such as `0`, `False`, `None`, and `""` are not skipped. Lists under
+`gridspan` are metadata and stay unchanged, including an empty `include` list.
 
+3. `YAML input and types`: The YAML root must be a dictionary. Empty or null
+documents produce an empty spec. Other root types raise `TypeError`.
+Parameter values keep the types returned by PyYAML; gridspan does not cast
+them. Quote a YAML value when it must be a string.
+
+Hashing encodes the selected values as JSON with sorted keys. Sets are sorted,
+and dates and times are written as text, so an unquoted YAML date and its
+matching quoted string count as the same identity. Any other type raises
+`TypeError` naming the key, because its text form may differ between runs.
+`to_argv` uses `str(value)` for every command-line value.
+
+4. `Hash stability`: Migration might be required while we iron out bugs, and
+ move towards stability. For now, keep each finished job's config, then rebuild
+ the store with the new version: `gs.GridSpan(finished_configs).stamp()` gives
+ the new hashes.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
